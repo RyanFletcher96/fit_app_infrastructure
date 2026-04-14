@@ -1,4 +1,3 @@
-cat > ansible/provision.yml << 'EOF'
 - name: Provision Security Group and EC2 Instance
   hosts: localhost
   connection: local
@@ -122,4 +121,3 @@ cat > ansible/provision.yml << 'EOF'
         ports:
           - "80:80"
         restart_policy: always
-EOF

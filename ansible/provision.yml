@@ -1,0 +1,125 @@
+cat > ansible/provision.yml << 'EOF'
+- name: Provision Security Group and EC2 Instance
+  hosts: localhost
+  connection: local
+  vars_files:
+    - vault.yml
+  vars:
+    instance_name: runcalc-prod
+    instance_type: t2.micro
+    image_id: "{{ ec2_ami }}"
+    region: "{{ aws_region }}"
+    security_group: runcalc_prod_sg
+
+  tasks:
+    - name: Create Security Group for prod instance
+      ec2_group:
+        name: "{{ security_group }}"
+        description: Security Group for RunCalc Prod Server
+        region: "{{ region }}"
+        rules:
+          - proto: tcp
+            ports: 80
+            cidr_ip: 0.0.0.0/0
+            rule_desc: Allow HTTP access
+          - proto: tcp
+            ports: 22
+            cidr_ip: 0.0.0.0/0
+            rule_desc: Allow SSH from anywhere
+
+    - name: Launch EC2 instance
+      ec2_instance:
+        name: "{{ instance_name }}"
+        key_name: "{{ ec2_key_name }}"
+        instance_type: "{{ instance_type }}"
+        security_group: "{{ security_group }}"
+        image_id: "{{ image_id }}"
+        region: "{{ region }}"
+        state: started
+        wait: yes
+        network:
+          assign_public_ip: true
+        volumes:
+          - device_name: /dev/sda1
+            ebs:
+              volume_size: 20
+              delete_on_termination: true
+      register: prod_instance
+
+    - name: Save public IP to file
+      copy:
+        content: "{{ prod_instance.instances[0].public_ip_address }}"
+        dest: /tmp/prod_ip.txt
+
+    - name: Add instance to inventory
+      add_host:
+        hostname: "{{ prod_instance.instances[0].public_ip_address }}"
+        groupname: ec2_prod
+        ansible_user: ubuntu
+        ansible_ssh_private_key_file: "{{ ec2_key_path }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+
+    - name: Wait for SSH to come up
+      wait_for:
+        host: "{{ prod_instance.instances[0].public_ip_address }}"
+        port: 22
+        delay: 20
+        timeout: 320
+        state: started
+
+- name: Install Docker and Deploy App
+  hosts: ec2_prod
+  remote_user: ubuntu
+  become: yes
+  become_method: sudo
+  vars_files:
+    - vault.yml
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: true
+
+    - name: Install Docker
+      apt:
+        name: docker.io
+        state: present
+
+    - name: Start and enable Docker
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add ubuntu user to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+    - name: Log in to Docker Hub
+      community.docker.docker_login:
+        username: "{{ dockerhub_username }}"
+        password: "{{ dockerhub_password }}"
+
+    - name: Pull specified image
+      community.docker.docker_image:
+        name: "ryanfletcher96/runcalc-pro:{{ image_tag }}"
+        source: pull
+        force_source: true
+
+    - name: Stop existing container if any
+      community.docker.docker_container:
+        name: runcalc
+        state: absent
+      ignore_errors: true
+
+    - name: Run container
+      community.docker.docker_container:
+        name: runcalc
+        image: "ryanfletcher96/runcalc-pro:{{ image_tag }}"
+        state: started
+        ports:
+          - "80:80"
+        restart_policy: always
+EOF

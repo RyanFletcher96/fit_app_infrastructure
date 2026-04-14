@@ -1,0 +1,8 @@
+cat > ansible/vault.yml << 'EOF'
+ec2_key_name: "fit_app_key"
+ec2_key_path: "/home/ubuntu/.ssh/fit_app_key.pem"
+ec2_ami: "ami-0ec10929233384c7f"
+aws_region: "us-east-1"
+dockerhub_username: "ryanfletcher96"
+dockerhub_password: "F0rz@321978967218"
+EOF
